@@ -1,6 +1,5 @@
 '''
 Future Additions:
--Live video mode
 -# of acquisitions option
 
 Known Issues:
@@ -14,7 +13,7 @@ Note: Any changes to the code will require repackaging into an executable again.
 '''
 
 ## Developed 2024 for the Reznik lab at the Univerisity of Colorado at Boulder by Cole Shank and Hope Whitelock
-vers_no = 1.1
+vers_no = 1.2
 
 
 ## imports
@@ -26,6 +25,7 @@ import datetime as dt
 import PyQt5.QtGui as QtG
 import PyQt5.QtCore as QtC
 import PyQt5.QtWidgets as QtW
+import pyqtgraph as pg
 from tkinter.filedialog import askdirectory
 import pylablib as pll
 pll.par["devices/dlls/picam"] = "path/to/dlls"
@@ -121,9 +121,6 @@ def imageCCD(pos, mode = "1D", cal = False):
     Window.camButton2D.setEnabled(False)
     Window.ramanButton.setEnabled(False)
 
-    cam.set_attribute_value("Correct Pixel Bias", True)
-    img = cam.snap(timeout = time_out)
-    
     global data
     global wavelen
     global wavenum
@@ -141,23 +138,34 @@ def imageCCD(pos, mode = "1D", cal = False):
         wavNum = nmToWav(laser,wav)
         wavelen.append(wav)
         wavenum.append(wavNum)
-    
+
+    cam.set_attribute_value("Correct Pixel Bias", True)
+
     if mode == "1D":
-        for i in range(0,1340): 
-            signal = sum(img[:, i])
-            data.append(signal)
+        cam.set_roi(vbin=100)
+        cam.setup_acquisition(mode="snap",nframes=10)
+        cam.start_acquisition()
+        cam.wait_for_frame()
+        img = cam.snap(timeout = time_out)
+
+        data = img.reshape(-1)
+        
         plt.plot(wavenum, data)
         plt.show()
-
+    
     elif mode == "2D":
-        ## This may or may not be the most sensible way to package the data into a 1D array...
-        ## In MATLAB, this requires a reshape and a rotate to display the proper orientation, which doesn't seem the most ideal but I don't know how else to do it
-        img1D = img.reshape(-1)
-        data = img1D.tolist()
+        cam.set_roi(vbin=1)
+        cam.setup_acquisition(mode="snap",nframes=10)
+        cam.start_acquisition()
+        cam.wait_for_frame()
+        img = cam.snap(timeout = time_out)
+        
+        data = img.reshape(-1)
+        plt.imshow(np.flip(img,1),aspect='auto')
+        
         wavelen = wavelen * 100
         wavenum = wavenum * 100
-        plt.imshow(img,aspect='auto')
-
+        
     autoSave(cal)
     
     ## re-enable buttons
@@ -206,8 +214,6 @@ def takeSpectrum(start, stop):
             pos = pos + (0.5*deltaL)
             Mono1.approachWL(float(pos))
 
-            ## let detector discharge between measurements
-            time.sleep(10)
             img = cam.snap(timeout = time_out)
 
             pxc = 670.5 # center pixel
@@ -279,8 +285,15 @@ def initialize():
     grating = config.get('Mono_settings', 'current_grating')
     Window.gratingMenu.setCurrentIndex(Window.gratingMenu.findText(str(grating)))
     
+    monoWL = config.get('Mono_settings', 'current_wavelength')
+    Window.currentMonoWavelengthLabel.setText(str(monoWL))
+
     Window.exposureTimeInput.setText("0.1")
     cam.set_attribute_value("Exposure Time", 1000*float(Window.exposureTimeInput.text()))
+    
+    Window.liveFastButton.setEnabled(False)
+    Window.liveSlowButton.setEnabled(True)
+    
     Window.currentDir.setText('C:/')
     global path
     path = os.path.join(Window.currentDir.text())
@@ -643,6 +656,35 @@ class MainWindow(QtW.QMainWindow):
         self.ramanButton.clicked.connect(lambda: takeSpectrum(self.startInput.text(), self.stopInput.text()))
         self.ramanButton.setText("Take Raman spectrum")
         
+        ## create header for live window
+        self.liveHeader = QtW.QLabel(self)
+        self.liveHeader.setText("Live Acquisition")
+        self.liveHeader.setStyleSheet("font-weight: bold")
+
+        ## create button for quick exposure
+        self.liveFastButton = QtW.QPushButton(self)
+        self.liveFastButton.setText("0.1 s")
+        self.liveFastButton.clicked.connect(lambda: LiveWindow.updateFramerate(self))
+        self.liveFastButton.clicked.connect(lambda: self.liveSlowButton.setEnabled(True))
+        self.liveFastButton.clicked.connect(lambda: self.liveFastButton.setEnabled(False))
+        
+        ## create button for long exposure
+        self.liveSlowButton = QtW.QPushButton(self)
+        self.liveSlowButton.setText("1 s")
+        self.liveSlowButton.clicked.connect(lambda: LiveWindow.updateFramerate(self))
+        self.liveSlowButton.clicked.connect(lambda: self.liveFastButton.setEnabled(True))
+        self.liveSlowButton.clicked.connect(lambda: self.liveSlowButton.setEnabled(False))
+        
+        ## create button for 1D live mode
+        self.live1DButton = QtW.QPushButton(self)
+        self.live1DButton.setText("Live spectrum acquisition")
+        self.live1DButton.clicked.connect(lambda: self.liveAcquire("1D"))
+        
+        ## create button for 2D live mode
+        self.live2DButton = QtW.QPushButton(self)
+        self.live2DButton.setText("Live video acquisition")
+        self.live2DButton.clicked.connect(lambda: self.liveAcquire("2D"))
+                
         
         ## create label for current directory
         self.currentDir = QtW.QLabel(self)
@@ -764,7 +806,7 @@ class MainWindow(QtW.QMainWindow):
         self.docButton.setObjectName("docButton")
         self.docButton.setText("Open Software Manual")
         self.docButton.clicked.connect(lambda: webbrowser.open('Software Manual.pdf'))
-
+        
         
         ## put widgets into the QFormLayout of tab1
         p1_vertical.addRow(self.systemHeader)
@@ -784,6 +826,11 @@ class MainWindow(QtW.QMainWindow):
         p2_vertical.addRow("Current temp   ", self.camTempLabel)
         p2_vertical.addRow("Calibrate CCD   ", self.ccdCalButton)
         p2_vertical.addRow("Exposure time (s)   ", self.exposureTimeInput)
+        p2_vertical.addRow(self.liveHeader)
+        p2_vertical.addRow("Timing", self.liveFastButton)
+        p2_vertical.addRow("", self.liveSlowButton)
+        p2_vertical.addRow("Live acquisition", self.live1DButton)
+        #p2_vertical.addRow(self.live2DButton) # Doesn't work RIP
         p2_vertical.addRow(self.snapshotHeader)
         p2_vertical.addRow("Take 1D snapshot   ", self.camButton)
         p2_vertical.addRow("Take 2D snapshot   ", self.camButton2D)
@@ -792,13 +839,13 @@ class MainWindow(QtW.QMainWindow):
         p2_vertical.addRow("Scan Stop (1/cm)   ", self.stopInput)
         p2_vertical.addRow(self.ramanButton)
 
-        ## put widgets into the QFormLayout of tab4
+        ## put widgets into the QFormLayout of tab3
         p3_vertical.addRow("Active folder   ", self.currentDir)
         p3_vertical.addRow("Select new folder   ", self.dirButton)
         p3_vertical.addRow("File name   ", self.fname)
         p3_vertical.addRow(self.saveButton)
         
-        ## put widgets into the QFormLayout of tab5
+        ## put widgets into the QFormLayout of tab4
         p4_vertical.addRow("Excitation Wavelength (nm)   ", self.shiftExcitationInput)
         p4_vertical.addRow(self.shiftWNHeader)
         p4_vertical.addRow("Response Wavelength (nm)   ", self.shiftResponseInput)
@@ -808,7 +855,7 @@ class MainWindow(QtW.QMainWindow):
         p4_vertical.addRow("Absolute wavelength (nm)   ", self.absoluteShift)
         p4_vertical.addRow("Relative wavelength (nm)   ", self.relativeShift)
         
-        ## put widgets into the QFormLayout of tab6
+        ## put widgets into the QFormLayout of tab5
         p5_vertical.addRow(self.versionHeader)
         p5_vertical.addRow(self.versionLabel)
         p5_vertical.addRow(self.monoSelectHeader)
@@ -819,11 +866,11 @@ class MainWindow(QtW.QMainWindow):
         p5_vertical.addRow("GitHub Repository   ", self.gitButton)
         p5_vertical.addRow("Configuration file   ", self.cfgButton)
         p5_vertical.addRow("Documentation   ", self.docButton)
+        
 
         ## set window title and add tab widget to main window
         self.setWindowTitle("Raman Control")
         self.setCentralWidget(tab_widget)
-
 
     def calibrateMono(self):
         ## updates the monochromator position in the program based on the counter
@@ -891,30 +938,30 @@ class MainWindow(QtW.QMainWindow):
         ## take and save image to verify calibration
         imageCCD(las, "1D", cal = True)
 
-
-    def closeEvent(self,event):
-        ## disconnects from instruments when X button is clicked
-        Mono1.disconnect()
-        print("Terminated connection with monochromator.")
-        cam.close()
-        print("Disconnected from camera.")
-        event.accept()
-        sys.exit(0)
-
-    def initialize(self):
-        ## pre-fills some data with standard values
-        self.currentLaserWavelengthInput.setText("532")
-        laserUpdate(532)
-        self.gratingMenu.setCurrentIndex(self.gratingMenu.findText("1800"))
-        self.exposureTimeInput.setText("0.1")
-        cam.set_attribute_value("Exposure Time", 1000*float(self.exposureTimeInput.text()))
-        self.currentDir.setText('C:/')
-        global path
-        path = os.path.join(self.currentDir.text())
+    def updateGrating(self):
+        grating = self.gratingMenu.currentText()
+        global nm_per_revolution
+        nm_per_revolution = str(32*float(150)/float(grating))
+        self.config = configparser.RawConfigParser()
+        self.config.read('mono.cfg')
+        self.config.set('Mono_settings', 'current_grating', grating)
+        self.config.set('Mono_settings', 'nm_per_revolution', nm_per_revolution)
+        f = open('mono.cfg',"w")
+        self.config.write(f)
 
     def pathUpdate(self):
         global path
         path = os.path.join(self.currentDir.text())
+
+    def liveAcquire(self,mode):
+        global livemode
+        if mode == "1D":
+            livemode = "1D"
+        elif mode == "2D":
+            livemode = "2D"
+        self.liveWindow = LiveWindow()
+        self.liveWindow.setGeometry(QtC.QRect(400,300,1000,600))
+        self.liveWindow.show()
 
     def calculateShift(self):
         if self.shiftResponseInput.text()+self.shiftInputWN.text() == '.':
@@ -936,16 +983,113 @@ class MainWindow(QtW.QMainWindow):
             self.absoluteShift.setText(str(nm))
             self.relativeShift.setText(str(round(nm - float(self.shiftExcitationInput.text()),2)))
 
-    def updateGrating(self):
-        grating = self.gratingMenu.currentText()
-        global nm_per_revolution
-        nm_per_revolution = str(32*float(150)/float(grating))
-        self.config = configparser.RawConfigParser()
-        self.config.read('mono.cfg')
-        self.config.set('Mono_settings', 'current_grating', grating)
-        self.config.set('Mono_settings', 'nm_per_revolution', nm_per_revolution)
-        f = open('mono.cfg',"w")
-        self.config.write(f)
+    def closeEvent(self,event):
+        ## disconnects from instruments when X button is clicked
+        Mono1.disconnect()
+        print("Terminated connection with monochromator.")
+        cam.close()
+        print("Disconnected from camera.")
+        event.accept()
+        sys.exit(0)
+
+
+class LiveWindow(QtW.QMainWindow):
+    ## pop out window for live graphing
+    def __init__(self):
+        super().__init__()
+        QtW.QWidget.__init__(self)
+        self.setWindowTitle("Live Acquisition")
+        
+        global live_wavenum
+        live_wavenum = []
+
+        pos = float(Window.currentMonoWavelengthLabel.text())
+
+        pxc = 670.5
+        pixel = range(0,1340)
+        for i in range(0,1340):
+            wav = float(pos) - nm_per_px*(pixel[i]-pxc)
+            wavNum = nmToWav(laser,wav)
+            live_wavenum.append(wavNum)       
+
+        self.updateFramerate(start=True)
+
+        ## update loop for live image
+        global liveTimer
+        liveTimer = QtC.QTimer(self)
+        liveTimer.start()
+        liveTimer.setInterval(livetime)
+        
+        ## live video or spectrum
+        global livemode
+        if  livemode == "1D":
+            self.plot_graph = pg.PlotWidget()
+            global curve
+            curve = self.plot_graph.plot()
+            self.setCentralWidget(self.plot_graph)
+            cam.set_roi(vbin = 100)
+            liveTimer.timeout.connect(lambda: self.update1D())
+        elif livemode == "2D":  ## currently non-functional
+            global image
+            image = pg.RawImageWidget()
+            self.setCentralWidget(image)
+            cam.set_roi(vbin = 1)
+            liveTimer.timeout.connect(lambda: self.update2D())
+        
+    def updateFramerate(self, start=False):
+        ## This whole start boolean business is awful but makes it work correctly for some reason
+        global livetime
+        if start == True:
+            if not(Window.liveFastButton.isEnabled()):
+                cam.set_attribute_value('Exposure Time', 100)
+                livetime = 100
+            elif not(Window.liveSlowButton.isEnabled()):
+                cam.set_attribute_value('Exposure Time', 1000)
+                livetime = 1000
+            else:
+                cam.set_attribute_value('Exposure Time', 100)
+                livetime = 100
+        else:
+            if Window.liveFastButton.isEnabled():
+                cam.set_attribute_value('Exposure Time', 100)
+                livetime = 100
+            elif Window.liveSlowButton.isEnabled():
+                cam.set_attribute_value('Exposure Time', 1000)
+                livetime = 1000
+            else:
+                cam.set_attribute_value('Exposure Time', 100)
+                livetime = 100
+
+    def update1D(self):
+        ## take most recent data and plot
+        global livetime
+        img = cam.snap(timeout = livetime)
+
+        live_data = []
+        live_data = img.reshape(-1)
+
+        global curve
+        curve.setData(live_wavenum,live_data)
+        
+        QtG.QGuiApplication.processEvents()
+
+    def update2D(self):
+        ## take most recent data and plot
+        global livetime
+        img = cam.snap(timeout = livetime)
+        img = np.rot90(img)
+        
+        global image
+        image.setImage(img)
+        
+        QtG.QGuiApplication.processEvents()
+
+    def closeEvent(self,event):
+        global liveTimer
+        liveTimer.stop()
+        cam.stop_acquisition()
+        cam.set_attribute_value("Exposure Time", 1000*float(Window.exposureTimeInput.text()))
+        event.accept()
 
 
 def main():        
