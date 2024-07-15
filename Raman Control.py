@@ -463,7 +463,7 @@ class Monochromator(object):
                     Window.progressBar.setValue(0)
                     self.config.set('Mono_settings', 'current_wavelength', approach_wavelength)
                     self.current_wavelength = approach_wavelength
-                    Window.currentMonoWavelengthLabel.setText(str(round(self.current_wavelength,2)) + " nm")
+                    Window.currentMonoWavelengthLabel.setText(str(round(self.current_wavelength,2)))
                     f = open('mono.cfg',"w")
                     self.config.write(f)
                     break
