@@ -1,6 +1,6 @@
 '''
 Future Additions:
--# of acquisitions option
+
 
 Known Issues:
 -Homing doesn't always work, idk why :(
@@ -13,7 +13,7 @@ Note: Any changes to the code will require repackaging into an executable again.
 '''
 
 ## Developed 2024 for the Reznik lab at the Univerisity of Colorado at Boulder by Cole Shank and Hope Whitelock
-vers_no = "1.3"
+vers_no = 1.4
 
 
 ## imports
@@ -150,14 +150,13 @@ def setTimeout(time):
     global time_out
     time_out = time
 
-def imageCCD(pos, mode = "1D", cal = False):
+def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
     ## disable buttons
     Window.camButton.setEnabled(False)
     Window.camButton2D.setEnabled(False)
     Window.ramanButton.setEnabled(False)
 
-    img = cam.snap(timeout = time_out)
-
+    cam.set_attribute_value("Correct Pixel Bias", True)
 
     global data
     global wavelen
@@ -167,7 +166,7 @@ def imageCCD(pos, mode = "1D", cal = False):
     wavelen = []
     wavenum = []
     signal = []
-    
+
     ## calculate x-axes
     pxc = 670.5 # center pixel
     pixel = range(0,1340)
@@ -176,25 +175,29 @@ def imageCCD(pos, mode = "1D", cal = False):
         wavNum = nmToWav(laser,wav)
         wavelen.append(wav)
         wavenum.append(wavNum)
-
-    cam.set_attribute_value("Correct Pixel Bias", True)
-
-    if mode == "1D":
-        for i in range(0,1340): 
-            signal = sum(img[:, i])
-            data.append(signal)
-        plt.plot(wavenum, data)
-        plt.show()
-
-    elif mode == "2D":
-        ## This may or may not be the most sensible way to package the data into a 1D array...
-        ## In MATLAB, this requires a reshape and a rotate to display the proper orientation, which doesn't seem the most ideal but I don't know how else to do it
-        img1D = img.reshape(-1)
-        data = img1D.tolist()
+    
+    wavelen = wavelen * nacq
+    wavenum = wavenum * nacq
+    if mode == "2D":
         wavelen = wavelen * 100
         wavenum = wavenum * 100
-        plt.imshow(img,aspect='auto')
-        
+    else:
+        pass
+
+    for n in range(1,nacq+1):
+        img = cam.snap(timeout = time_out)
+        if mode == "1D":
+            for i in range(0,1340): 
+                signal = sum(img[:, i])
+                data.append(signal)
+            plt.plot(wavenum[0:1340], data[-1340+1340*n:1340*n])
+            plt.show()
+        elif mode == "2D":
+            ## This may or may not be the most sensible way to package the data into a 1D array, but I don't know how else to do it
+            img1D = np.ravel(img)
+            signal = img1D.tolist()
+            data = data + signal
+            plt.imshow(img,aspect='auto')
     autoSave(cal)
     
     ## re-enable buttons
@@ -276,7 +279,7 @@ def autoSave(cal=False):
         autopath = os.path.join('C:/Users/nickp/Documents/Raman data files',str(tempname))
 
     file = open(autopath,'w')
-    for line in np.arange(len(data)):
+    for line in range(len(data)):
         stringToWrite = str(wavelen[line])+','+str(wavenum[line])+','+str(data[line])+'\n' 
         file.write(stringToWrite)
 
@@ -292,7 +295,7 @@ def saveData(fname):
     else:
         file = open(fpath,'w')
         file.write('Wavelength(nm), Raman shift(cm^-1), Intensity(arb) \n')
-        for line in np.arange(len(data)):
+        for line in range(len(data)):
             stringToWrite = str(wavelen[line])+','+str(wavenum[line])+','+str(data[line])+'\n' 
             file.write(stringToWrite)
 
@@ -606,6 +609,9 @@ class MainWindow(QtW.QMainWindow):
         self.exposureTimeInput.textChanged.connect(lambda: cam.set_attribute_value("Exposure Time", 1000*float(self.exposureTimeInput.text())))
         self.exposureTimeInput.textChanged.connect(lambda: setTimeout(5000+float(self.exposureTimeInput.text())))
 
+        self.nacqsInput = QtW.QSpinBox(self)
+        self.nacqsInput.setRange(1,99)
+
         self.snapshotHeader = QtW.QLabel(self)
         self.snapshotHeader.setText("Single Spectrum")
         self.snapshotHeader.setStyleSheet("font-weight: bold")
@@ -615,7 +621,7 @@ class MainWindow(QtW.QMainWindow):
         self.camButton.clicked.connect(lambda: self.camButton.setEnabled(False))
         self.camButton.clicked.connect(lambda: self.camButton2D.setEnabled(False))
         self.camButton.clicked.connect(lambda: self.ramanButton.setEnabled(False))
-        self.camButton.clicked.connect(lambda: imageCCD(float(Mono1.current_wavelength), "1D"))
+        self.camButton.clicked.connect(lambda: imageCCD(float(Mono1.current_wavelength), "1D", self.nacqsInput.value()))
         self.camButton.setText("Take 1D spectrum")
 
         self.camButton2D = QtW.QPushButton(self)
@@ -623,7 +629,7 @@ class MainWindow(QtW.QMainWindow):
         self.camButton2D.clicked.connect(lambda: self.camButton.setEnabled(False))
         self.camButton2D.clicked.connect(lambda: self.camButton2D.setEnabled(False))
         self.camButton2D.clicked.connect(lambda: self.ramanButton.setEnabled(False))
-        self.camButton2D.clicked.connect(lambda: imageCCD(float(Mono1.current_wavelength), "2D"))
+        self.camButton2D.clicked.connect(lambda: imageCCD(float(Mono1.current_wavelength), "2D", self.nacqsInput.value()))
         self.camButton2D.setText("Take 2D image")
         
         self.ramanHeader = QtW.QLabel(self)
@@ -654,6 +660,7 @@ class MainWindow(QtW.QMainWindow):
         p2_vertical.addRow("Current temp", self.camTempLabel)
         p2_vertical.addRow("Calibrate CCD", self.ccdCalButton)
         p2_vertical.addRow("Exposure time (s)", self.exposureTimeInput)
+        p2_vertical.addRow("Number of acquisitions:", self.nacqsInput)
         p2_vertical.addRow(self.snapshotHeader)
         p2_vertical.addRow("Take 1D snapshot", self.camButton)
         p2_vertical.addRow("Take 2D snapshot", self.camButton2D)
