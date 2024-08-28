@@ -12,12 +12,11 @@ Note: Any changes to the code will require repackaging into an executable again.
 '''
 
 ## Developed 2024 for the Reznik lab at the Univerisity of Colorado at Boulder by Cole Shank and Hope Whitelock
-vers_no = 2.0
+vers_no = 2.1
 
 ## imports
 import sys
 import os
-#from datetime import date
 import configparser, time, serial
 import datetime as dt
 import PyQt5.QtGui as QtG
@@ -237,7 +236,7 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
     
     for n in range(1,nacq+1):
         img = cam.snap(timeout = time_out)
-        Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',1000)
+        Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',3000)
         if mode == "1D":
             for i in range(0,1340): 
                 signal = sum(img[:, i])
@@ -250,6 +249,7 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
             signal = img1D.tolist()
             data = data + signal
             plt.imshow(img,aspect='auto')
+        app.processEvents()
     autoSave(cal)
     
     ## re-enable buttons
@@ -581,8 +581,8 @@ class MainWindow(QtW.QMainWindow):
         self.systemHeader.setStyleSheet("font-weight: bold")
         
         self.laserMenu = QtW.QComboBox(self)
-        self.laserMenu.setEditable(False)
-        self.laserMenu.addItems(["530.79","670.94"])
+        self.laserMenu.setEditable(True)
+        self.laserMenu.addItems(["530.79","532","670.94"])
         self.laserMenu.currentTextChanged.connect(lambda: laserUpdate())
 
         self.gratingMenu = QtW.QComboBox(self)
@@ -811,7 +811,7 @@ class MainWindow(QtW.QMainWindow):
         self.dirButton.setText("...")
      
         self.fname = QtW.QLineEdit(self)
-        self.fname.setMaxLength(50)
+        self.fname.setMaxLength(80)
         self.fname.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
         self.fname.textChanged.emit(self.fname.text())
 
@@ -849,8 +849,8 @@ class MainWindow(QtW.QMainWindow):
         
         self.shiftInputWN = QtW.QLineEdit(self)
         self.shiftInputWN.setObjectName("shiftInputWN")
-        self.shiftInputWN.setMaxLength(4)
-        self.shiftInputWN.setInputMask("#9999")
+        self.shiftInputWN.setMaxLength(7)
+        self.shiftInputWN.setInputMask("#9999.9")
         self.shiftInputWN.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
         self.shiftInputWN.textChanged.connect(lambda: self.calculateShift())
         
@@ -870,16 +870,15 @@ class MainWindow(QtW.QMainWindow):
         p5_vertical.addRow("Relative wavelength (nm)", self.relativeShift)
         
         ### TAB 6
-        ''' ## Left for easy feature testing/debugging
+        '''
+        ## Left for easy feature testing/debugging
         self.testButton = QtW.QPushButton(self)
         self.testButton.setText("TEST")
-
         ## update the following line to test whatever functionality is desired:
-        self.testButton.clicked.connect(lambda: print("test"))
-        
+        self.testButton.clicked.connect(lambda: self.testFunction())        
         p6_vertical.addRow(self.testButton)
         '''
-        
+
         self.versionHeader = QtW.QLabel(self)
         self.versionHeader.setText("Code Version")
         self.versionHeader.setStyleSheet("font-weight: bold")
@@ -891,7 +890,7 @@ class MainWindow(QtW.QMainWindow):
         
         self.resetButton = QtW.QPushButton(self)
         self.resetButton.setText("Reset Application")
-        self.resetButton.clicked.connect(lambda: initialize())
+        self.resetButton.clicked.connect(lambda: self.resetWindow())
 
         self.calHeader = QtW.QLabel(self)
         self.calHeader.setText("Calibration")
@@ -1095,6 +1094,16 @@ class MainWindow(QtW.QMainWindow):
             nm = round(wavToNM(self.shiftExcitationInput.text(),self.shiftInputWN.text()),2)
             self.absoluteShift.setText(str(nm))
             self.relativeShift.setText(str(round(nm - float(self.shiftExcitationInput.text()),2)))
+
+    def resetWindow(self):
+        ## designed to reset imaging buttons after a camera error
+        cam.stop_acquisition()
+        self.camButton.setEnabled(True)
+        self.camButton2D.setEnabled(True)
+        self.ramanButton.setEnabled(True)
+
+    def testFunction(self):
+        print("test")
 
     def closeEvent(self,event):
         ## disconnects from instruments when X button is clicked
