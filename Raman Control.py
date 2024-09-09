@@ -12,7 +12,7 @@ Note: Any changes to the code will require repackaging into an executable again.
 '''
 
 ## Developed 2024 for the Reznik lab at the Univerisity of Colorado at Boulder by Cole Shank and Hope Whitelock
-vers_no = 2.1
+vers_no = 2.2
 
 ## imports
 import sys
@@ -109,7 +109,9 @@ def initialize():
     Window.live1sButton.setEnabled(True)
     global liveRate
     liveRate = 100
-
+    
+    Window.liveMedian.setCheckState(0)
+    
     global xmin, xmax, ymin, ymax
     xmin = 0
     xmax = 0
@@ -236,7 +238,7 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
     
     for n in range(1,nacq+1):
         img = cam.snap(timeout = time_out)
-        Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',3000)
+        Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',1000*time_out)
         if mode == "1D":
             for i in range(0,1340): 
                 signal = sum(img[:, i])
@@ -574,6 +576,7 @@ class MainWindow(QtW.QMainWindow):
         self.update_timer.setInterval(1000) # milliseconds
         self.update_timer.setSingleShot(False)
         self.update_timer.timeout.connect(lambda: self.camTempLabel.setText(str(cam.get_attribute_value('Sensor Temperature Reading')) + " C"))
+        self.update_timer.timeout.connect(lambda: app.processEvents())
         
         ### TAB 1
         self.systemHeader = QtW.QLabel(self)
@@ -753,7 +756,9 @@ class MainWindow(QtW.QMainWindow):
         self.live1sButton.clicked.connect(lambda: self.live100msButton.setEnabled(True))
         self.live1sButton.clicked.connect(lambda: self.live1sButton.setEnabled(False))
         self.live1sButton.clicked.connect(lambda: self.liveAcquire(rate=1000))
-
+        
+        self.liveMedian = QtW.QCheckBox(self)
+        
         self.liveViewHeader = QtW.QLabel(self)
         self.liveViewHeader.setText("View Controls")
         self.liveViewHeader.setStyleSheet("font-weight: bold")
@@ -793,6 +798,7 @@ class MainWindow(QtW.QMainWindow):
         p3_vertical.addRow(self.live10msButton)
         p3_vertical.addRow(self.live100msButton)
         p3_vertical.addRow(self.live1sButton)
+        p3_vertical.addRow("Persistence?",self.liveMedian)
         p3_vertical.addRow(self.liveViewHeader)
         p3_vertical.addRow(self.xminLabel, self.xminInput)
         p3_vertical.addRow(self.xmaxLabel, self.xmaxInput)
@@ -1098,6 +1104,7 @@ class MainWindow(QtW.QMainWindow):
     def resetWindow(self):
         ## designed to reset imaging buttons after a camera error
         cam.stop_acquisition()
+        cam.stop_acquisition()
         self.camButton.setEnabled(True)
         self.camButton2D.setEnabled(True)
         self.ramanButton.setEnabled(True)
@@ -1148,6 +1155,10 @@ class LiveWindow(QtW.QMainWindow):
         liveTimer.setInterval(livetime)
         
         ## creates live plot
+        global data_buffer
+        data_buffer = np.zeros((1340,10))
+        
+        
         global plot_graph
         plot_graph = pg.PlotWidget()
         global curve
@@ -1179,7 +1190,7 @@ class LiveWindow(QtW.QMainWindow):
         else:
             plot_graph.autoRange(item=curve)
             plot_graph.enableAutoRange()
-            
+
     def updateLimits(self):
         global xmin, xmax, ymin, ymax, plot_graph
         if Window.xminInput.text()+Window.xmaxInput.text()+Window.yminInput.text()+Window.ymaxInput.text()=="":
@@ -1226,16 +1237,21 @@ class LiveWindow(QtW.QMainWindow):
 
     def update(self):
         ## take most recent data and plot
+        global curve
+        global data_buffer
         global livetime
         img = cam.snap(timeout = livetime)
-
         live_data = []
         live_data = img.reshape(-1)
-
-        global curve
-        curve.setData(live_wavenum,live_data)
         
-        app.processEvents() #formerly QtG.QGuiApplication.
+        if not(Window.liveMedian.isChecked()):
+            curve.setData(live_wavenum,live_data)
+        else:
+            data_buffer[:,9] = live_data
+            data_buffer = np.roll(data_buffer,1,axis=1)
+            median_data = np.median(data_buffer,axis=1)
+            curve.setData(live_wavenum,median_data)
+        app.processEvents()
 
     def closeEvent(self,event):
         global liveTimer
