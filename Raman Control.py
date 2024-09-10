@@ -238,7 +238,8 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
     
     for n in range(1,nacq+1):
         img = cam.snap(timeout = time_out)
-        Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',1000*time_out)
+        int_time_out = int(round(time_out))
+        Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',1000*int_time_out)
         if mode == "1D":
             for i in range(0,1340): 
                 signal = sum(img[:, i])
