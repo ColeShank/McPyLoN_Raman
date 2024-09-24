@@ -12,7 +12,7 @@ Note: Any changes to the code will require repackaging into an executable again.
 '''
 
 ## Developed 2024 for the Reznik lab at the Univerisity of Colorado at Boulder by Cole Shank and Hope Whitelock
-vers_no = 2.2
+vers_no = "2.3"
 
 ## imports
 import sys
@@ -32,7 +32,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import ctypes
 import webbrowser
-myappid = 'reznik.ramanControl.tony.01' # arbitrary string
+myappid = 'ramanControl.reznik.01' # arbitrary string
 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 plt.ion()
 
@@ -209,7 +209,7 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
     app.processEvents()
 
     cam.set_attribute_value("Correct Pixel Bias", True)
-
+    
     global data
     global wavelen
     global wavenum
@@ -242,7 +242,7 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
         Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',1000*int_time_out)
         if mode == "1D":
             for i in range(0,1340): 
-                signal = sum(img[:, i])
+                signal = np.median(img[:, i])
                 data.append(signal)
             plt.plot(wavenum[0:1340], data[-1340+1340*n:1340*n])
             plt.show()
@@ -503,13 +503,17 @@ class Monochromator(object):
 		
     def approachWL(self, approach_wavelength):
         Window.approachButton.setEnabled(False)
+        self.config = configparser.RawConfigParser()
+        self.config.read('mono.cfg')
+        self.nm_per_revolution = self.config.get('Mono_settings', 'nm_per_revolution')
+        self.steps_per_revolution = self.config.get('Mono_settings', 'steps_per_revolution')
         if isinstance(approach_wavelength, float):
-            print("Wavelength to approach: " + str(approach_wavelength) + " nm")
             nm_difference = float(approach_wavelength) - float(self.current_wavelength)
-            print("Difference in nm: " + str(nm_difference))
             step_difference = round(((float(nm_difference) / float(self.nm_per_revolution)) * float(self.steps_per_revolution))+ float(self.offset))
-            print("Difference in steps: " + str(step_difference))
             time_needed_sec = round(abs(step_difference / int(self.speed)) + abs(int(self.offset)/int(self.approach_speed)),2)
+            print("Wavelength to approach: " + str(approach_wavelength) + " nm")
+            print("Difference in nm: " + str(nm_difference))
+            print("Difference in steps: " + str(step_difference))
             print("Time needed for operation: " + str(time_needed_sec) + " s")
             Window.statusBar().showMessage("Moving monochromator . . .  (est. "+str(time_needed_sec)+" seconds)",3000)
             time_delay_for_progressbar = (time_needed_sec + 1) / 100 # with 1 second buffer
@@ -877,6 +881,7 @@ class MainWindow(QtW.QMainWindow):
         p5_vertical.addRow("Relative wavelength (nm)", self.relativeShift)
         
         ### TAB 6
+        
         '''
         ## Left for easy feature testing/debugging
         self.testButton = QtW.QPushButton(self)
