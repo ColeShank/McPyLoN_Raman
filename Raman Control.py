@@ -1,18 +1,15 @@
 '''
-Future Additions:
--
-
 Known Issues:
 - Homing doesn't always work, idk why :(
 
-For the next editor:
--
+Planned Future Work:
+- Update manual
 
 Note: Any changes to the code will require repackaging into an executable again.
 '''
 
 ## Developed 2024 for the Reznik lab at the Univerisity of Colorado at Boulder by Cole Shank and Hope Whitelock
-vers_no = "2.3"
+vers_no = "3.0"
 
 ## imports
 import sys
@@ -27,7 +24,6 @@ from tkinter.filedialog import askdirectory
 import pylablib as pll
 pll.par["devices/dlls/picam"] = "path/to/dlls"
 from pylablib.devices import PrincetonInstruments
-import matplotlib
 from matplotlib import pyplot as plt
 import numpy as np
 import ctypes
@@ -40,9 +36,7 @@ def setup():
     ## connects to monochromator and ccd
     config = configparser.RawConfigParser()
     config.read('mono.cfg')
-
     sys = config.get('Mono_settings', 'mono_system')
-
     global localuser
     global comport
     if sys == "single":
@@ -54,7 +48,6 @@ def setup():
     elif sys == "triple_triple":
         localuser = "Reznik Lab"
         comport = "COM1"
-
     global Mono1
     print("Connecting to monochromator ...")
     Mono1 = Monochromator()
@@ -66,42 +59,32 @@ def setup():
     print('Connected.')
     global Window
     Window = MainWindow()
-    Window.resize(600,400)
     Window.show()
     
 def initialize():
     ## initialize values and settings
     config = configparser.RawConfigParser()
     config.read('mono.cfg')
-    
     mono_system = config.get('Mono_settings', 'mono_system')
     systemUpdate(mono_system)
-    
     monoWL = config.get('Mono_settings', 'current_wavelength')
     monoWL = round(float(monoWL),2)
     Window.currentMonoWavelengthLabel.setText(str(monoWL))
-    
     global nm_per_px
     nm_per_px = float(config.get('Laser_settings', 'nm_per_px'))
-    
     laserWL = config.get('Laser_settings', 'laser_wavelength')
     Window.laserMenu.setCurrentText(str(laserWL))
     laserUpdate()
     Window.shiftExcitationInput.setText(str(laserWL))
     Window.calWLInput.setText(str(laserWL))
-    
     grating = config.get('Mono_settings', 'current_grating')
     Window.gratingMenu.setCurrentText(str(grating))
-    
     Window.exposureTimeInput.setText("0.1")
     cam.set_attribute_value("Exposure Time", 1000*float(Window.exposureTimeInput.text()))
     global time_out
     time_out = 1000
-    
     Window.camButton.setEnabled(True)
     Window.camButton2D.setEnabled(True)
-    Window.ramanButton.setEnabled(True)
-
     global liveopen
     liveopen = False
     Window.live10msButton.setEnabled(True)
@@ -109,18 +92,11 @@ def initialize():
     Window.live1sButton.setEnabled(True)
     global liveRate
     liveRate = 100
-    
     Window.liveMedian.setCheckState(0)
-    
-    global xmin, xmax, ymin, ymax
-    xmin = 0
-    xmax = 0
-    ymin = 0
-    ymax = 0
-
     Window.currentDir.setText('C:/Users/'+localuser+'/Desktop')
     global path
     path = os.path.join(Window.currentDir.text())
+    Window.statusBar().showMessage('',1)
 
 def systemUpdate(sys):
     global localuser
@@ -165,7 +141,7 @@ def laserUpdate():
         laser = float(wavl)
         config = configparser.RawConfigParser()
         config.read('mono.cfg')
-        laserWL = config.set('Laser_settings', 'laser_wavelength', str(laser))
+        config.set('Laser_settings', 'laser_wavelength', str(laser))
         f = open('mono.cfg',"w")
         config.write(f)
         Window.windowRange()
@@ -205,15 +181,19 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
     ## disable buttons
     Window.camButton.setEnabled(False)
     Window.camButton2D.setEnabled(False)
-    Window.ramanButton.setEnabled(False)
     app.processEvents()
 
     cam.set_attribute_value("Correct Pixel Bias", True)
-    
+    if mode=="1D":
+        cam.set_roi(vbin = 100)
+    elif mode=="2D":
+        cam.set_roi(vbin = 1)
+    else:
+        pass
+       
     global data
     global wavelen
     global wavenum
-
     data = []
     wavelen = []
     wavenum = []
@@ -236,117 +216,52 @@ def imageCCD(pos, mode = "1D", nacq = 1, cal = False):
     else:
         pass
     
-    for n in range(1,nacq+1):
-        img = cam.snap(timeout = time_out)
+    for n in range(0,nacq):
         int_time_out = int(round(time_out))
-        Window.statusBar().showMessage('Acquisition: ('+str(n)+'/'+str(nacq)+')',1000*int_time_out)
+        Window.statusBar().showMessage('Acquisition underway: ('+str(n+1)+'/'+str(nacq)+')',1000*(int_time_out-5))
+        app.processEvents()
+        try: ## Mutes most errors, including invalid binning and acquisition not in progress 
+            img = np.array(cam.grab(nframes=1, frame_timeout=time_out))
+        except:
+            try:
+                img = np.array(cam.grab(nframes=1, frame_timeout=time_out))
+            except:
+                img = np.array(cam.grab(nframes=1, frame_timeout=time_out))
         if mode == "1D":
-            for i in range(0,1340): 
-                signal = np.median(img[:, i])
-                data.append(signal)
-            plt.plot(wavenum[0:1340], data[-1340+1340*n:1340*n])
+            signal = img.reshape(-1)
+            data = np.concatenate((data,signal))
+            plt.plot(wavenum[0:1340], data[1340*n:1340*(n+1)])
             plt.show()
         elif mode == "2D":
             ## This may or may not be the most sensible way to package the 2D data into a 1D array
+            img = np.squeeze(img)
             img1D = np.ravel(img)
             signal = img1D.tolist()
             data = data + signal
             plt.imshow(img,aspect='auto')
-        app.processEvents()
+    app.processEvents()
     autoSave(cal)
     
     ## re-enable buttons
     Window.camButton.setEnabled(True)
     Window.camButton2D.setEnabled(True)
-    Window.ramanButton.setEnabled(True)
-
-def takeSpectrum(start, stop):
-    if start == '':
-        Window.statusBar().showMessage("Error: Start value required",3000)
-        Window.camButton.setEnabled(True)
-        Window.camButton2D.setEnabled(True)
-        Window.ramanButton.setEnabled(True)
-    elif stop == '':
-        Window.statusBar().showMessage("Error: Stop value required",3000)
-        Window.camButton.setEnabled(True)
-        Window.camButton2D.setEnabled(True)
-        Window.ramanButton.setEnabled(True)
-    else:
-        Window.camButton.setEnabled(False)
-        Window.camButton2D.setEnabled(False)
-        Window.ramanButton.setEnabled(False)
-        app.processEvents()
-
-        ## pixel bias compensation leads to a weird background
-        cam.set_attribute_value("Correct Pixel Bias", False)
-
-        ## start by converting start and stop to nm
-        nmStart = wavToNM(laser,start)
-        nmStop = wavToNM(laser,stop)
-        if nmStop < nmStart:
-            nmTemp = nmStop
-            nmStop = nmStart
-            nmStart = nmTemp
-        deltaL = 1340*nm_per_px #detector wavelength range
-        numSnaps = int(np.ceil(abs(nmStart - nmStop)/deltaL)) #number of detector width spectra required
-
-        Window.statusBar().showMessage("Estimated time needed: "+str((1000/60)*float(cam.cav["Exposure Time"])*(0.5*float(stop)/1000 + 0.5*numSnaps))+" minutes.",5000)
-        time.sleep(5)
-        Window.statusBar().showMessage("Pausing 30 seconds before data collection...", 3000)
-        time.sleep(30)
-
-        global data
-        global wavelen
-        global wavenum
-        data = []
-        wavelen =[]
-        wavenum = []
-        signal = []
-
-        for pos in np.linspace(float(nmStart - (0.5*deltaL) + deltaL*(numSnaps-0.5)), float(nmStart), numSnaps):            
-            ## position is detector center
-            pos = pos + (0.5*deltaL)
-            Mono1.approachWL(float(pos))
-
-            img = cam.snap(timeout = time_out)
-
-            pxc = 670.5 # center pixel
-            pixel = range(0,1340)
-            for i in range(0,1340):
-                wav = pos - nm_per_px*(pixel[i]-pxc)
-                wavNum = nmToWav(laser,wav)
-                signal = sum(img[:, i])
-                wavelen.append(wav)
-                wavenum.append(wavNum)
-                data.append(signal)
-
-        autoSave()
-        print('Spectrum complete.')
-        Window.camButton.setEnabled(True)
-        Window.camButton2D.setEnabled(True)
-        Window.ramanButton.setEnabled(True)
-        plt.plot(wavenum, data)
-        plt.show()
 
 def autoSave(cal=False):
     ## saves backup data to the Documents repositories
     now = dt.datetime.now()
     now_str = now.strftime('%y%m%d%H%M%S')
     docpath = f'C:/Users/{localuser}/Documents'
-
     if cal == True:
         tempname = 'Cal_'+now_str
         autopath = os.path.join(docpath,'Raman calibration files',str(tempname))
     elif cal == False:
         tempname = 'Raman_'+now_str
         autopath = os.path.join(docpath,'Raman data files',str(tempname))
-
     file = open(autopath,'w')
     file.write('Wavelength(nm), Raman shift(cm^-1), Intensity(counts) \n')
     for line in range(len(data)):
         stringToWrite = str(wavelen[line])+','+str(wavenum[line])+','+str(data[line])+'\n'
         file.write(stringToWrite)
-
     file.close()
     autopath_txt = os.path.join(autopath+'.txt')
     os.rename(autopath,autopath_txt)
@@ -366,7 +281,6 @@ def saveData(fname):
         file.close()
         fpath_txt = os.path.join(path,fname+'.txt')
         os.rename(fpath,fpath_txt)
-        
         Window.statusBar().showMessage("File saved.", 3000)
 
 class Monochromator(object):
@@ -552,28 +466,36 @@ class MainWindow(QtW.QMainWindow):
     def __init__(self):
         super().__init__()
 
+        ## all of this to make the tabs span the window width
+        class TabBar(QtW.QTabBar):
+            def __init__(self):
+                super().__init__()
+            def sizeHint(self):
+                return QtC.QSize(600,20)
+
         ## lay out application
         self.setWindowTitle("Raman Control")
-        tab_widget = QtW.QTabWidget()
+        self.setFixedSize(600, 400)
+        self.statusBar().setSizeGripEnabled(False)
+        self.tabs = QtW.QTabWidget()
+        self.setCentralWidget(self.tabs)
+        self.tab_bar = TabBar()
+        self.tabs.setTabBar(self.tab_bar)     
         tab1 = QtW.QWidget()
         tab2 = QtW.QWidget()
         tab3 = QtW.QWidget()
         tab4 = QtW.QWidget()
         tab5 = QtW.QWidget()
-        tab6 = QtW.QWidget()
         p1_vertical = QtW.QFormLayout(tab1)
         p2_vertical = QtW.QFormLayout(tab2)
         p3_vertical = QtW.QFormLayout(tab3)
         p4_vertical = QtW.QFormLayout(tab4)
         p5_vertical = QtW.QFormLayout(tab5)
-        p6_vertical = QtW.QFormLayout(tab6)
-        tab_widget.addTab(tab1, "Spectrometer Control")
-        tab_widget.addTab(tab2, "CCD Control")
-        tab_widget.addTab(tab3, "Live Acquisition")
-        tab_widget.addTab(tab4, "File Saving")
-        tab_widget.addTab(tab5, "Shift Calculator")
-        tab_widget.addTab(tab6, "Configuration")      
-        self.setCentralWidget(tab_widget)
+        self.tabs.addTab(tab1, "Spectrometer Control")
+        self.tabs.addTab(tab2, "CCD Control")
+        self.tabs.addTab(tab3, "File Saving")
+        self.tabs.addTab(tab4, "Shift Calculator")
+        self.tabs.addTab(tab5, "Configuration")
         
         ## update loop for CCD temperature
         self.update_timer = QtC.QTimer(self)
@@ -644,7 +566,7 @@ class MainWindow(QtW.QMainWindow):
         p1_vertical.addRow("                        (1/cm)", self.rangeLabelWN)
         p1_vertical.addRow(self.approachWavelengthInput, self.approachButton)
         p1_vertical.addRow(self.progressBar)
-        #p1_vertical.addRow("Home counter location: 660.1", self.homeButton) # Doesn't work RIP
+        #p1_vertical.addRow("Home counter location: 06601", self.homeButton) # Doesn't work RIP
 
         ### TAB 2
         self.ccdHeader = QtW.QLabel(self)
@@ -659,71 +581,32 @@ class MainWindow(QtW.QMainWindow):
         self.exposureTimeInput.setMaxLength(7)
         self.exposureTimeInput.setInputMask("9999.99")
         self.exposureTimeInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        self.exposureTimeInput.textChanged.connect(lambda: cam.set_attribute_value("Exposure Time", 1000*float(self.exposureTimeInput.text())))
-        self.exposureTimeInput.textChanged.connect(lambda: setTimeout(5.0+float(self.exposureTimeInput.text())))
+        self.exposureTimeInput.textChanged.connect(lambda: cam.set_attribute_value("Exposure Time", 1000*float(self.exposureTimeInput.text())) if self.exposureTimeInput.text()!='.' else None)
+        self.exposureTimeInput.textChanged.connect(lambda: setTimeout(5.0+float(self.exposureTimeInput.text())) if self.exposureTimeInput.text()!='.' else None)
+        self.exposureTimeInput.textChanged.connect(lambda: self.statusBar().showMessage('Error: must input exposure time', 3000) if self.exposureTimeInput.text()=='.' else None)
 
         self.nacqsInput = QtW.QSpinBox(self)
         self.nacqsInput.setRange(1,199)
         self.nacqsInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
 
         self.snapshotHeader = QtW.QLabel(self)
-        self.snapshotHeader.setText("Single Spectrum")
+        self.snapshotHeader.setText("Data Collection")
         self.snapshotHeader.setStyleSheet("font-weight: bold")
 
         self.camButton = QtW.QPushButton(self)
         self.camButton.setObjectName("camButton")
-        self.camButton.clicked.connect(lambda: self.camButton.setEnabled(False))
-        self.camButton.clicked.connect(lambda: self.camButton2D.setEnabled(False))
-        self.camButton.clicked.connect(lambda: self.ramanButton.setEnabled(False))
         self.camButton.clicked.connect(lambda: imageCCD(float(Mono1.current_wavelength), "1D", self.nacqsInput.value()))
         self.camButton.setText("Take 1D spectrum")
 
         self.camButton2D = QtW.QPushButton(self)
         self.camButton2D.setObjectName("camButton2D")
-        self.camButton2D.clicked.connect(lambda: self.camButton.setEnabled(False))
-        self.camButton2D.clicked.connect(lambda: self.camButton2D.setEnabled(False))
-        self.camButton2D.clicked.connect(lambda: self.ramanButton.setEnabled(False))
         self.camButton2D.clicked.connect(lambda: imageCCD(float(Mono1.current_wavelength), "2D", self.nacqsInput.value()))
         self.camButton2D.setText("Take 2D image")
-        
-        self.ramanHeader = QtW.QLabel(self)
-        self.ramanHeader.setText("Wideband Raman Spectrum")
-        self.ramanHeader.setStyleSheet("font-weight: bold")
-        
-        self.startInput = QtW.QLineEdit(self)
-        self.startInput.setMaxLength(5)
-        self.startInput.setInputMask("#9999")
-        self.startInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        self.startInput.textChanged.emit(self.startInput.text())
 
-        self.stopInput = QtW.QLineEdit(self)
-        self.stopInput.setMaxLength(5)
-        self.stopInput.setInputMask("#9999")
-        self.stopInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        self.stopInput.textChanged.emit(self.stopInput.text())
+        self.liveHeader = QtW.QLabel(self)
+        self.liveHeader.setText("Live Acquisition")
+        self.liveHeader.setStyleSheet("font-weight: bold")
 
-        self.ramanButton = QtW.QPushButton(self)
-        self.ramanButton.setObjectName("ramanButton")
-        self.ramanButton.clicked.connect(lambda: takeSpectrum(self.startInput.text(), self.stopInput.text()))
-        self.ramanButton.setText("Take Raman spectrum")
-
-        p2_vertical.addRow(self.ccdHeader)
-        p2_vertical.addRow("Current temp", self.camTempLabel)
-        p2_vertical.addRow("Exposure time (s)", self.exposureTimeInput)
-        p2_vertical.addRow("Number of acquisitions:", self.nacqsInput)
-        p2_vertical.addRow(self.snapshotHeader)
-        p2_vertical.addRow("Take 1D snapshot", self.camButton)
-        p2_vertical.addRow("Take 2D snapshot", self.camButton2D)
-        p2_vertical.addRow(self.ramanHeader)
-        p2_vertical.addRow("Scan Start (1/cm)", self.startInput)
-        p2_vertical.addRow("Scan Stop (1/cm)", self.stopInput)
-        p2_vertical.addRow(self.ramanButton)
-
-        ### TAB 3
-        self.liveStartStopHeader = QtW.QLabel(self)
-        self.liveStartStopHeader.setText("Live Acquisition")
-        self.liveStartStopHeader.setStyleSheet("font-weight: bold")
-        
         self.liveStartButton = QtW.QPushButton(self)
         self.liveStartButton.setText("Start Acquisition")
         self.liveStartButton.clicked.connect(lambda: self.liveAcquire(go=True))
@@ -736,9 +619,9 @@ class MainWindow(QtW.QMainWindow):
         self.liveStopButton.clicked.connect(lambda: self.liveWindow.close())
         self.liveStopButton.clicked.connect(lambda: self.liveStartButton.setEnabled(True))
         self.liveStopButton.clicked.connect(lambda: self.liveStopButton.setEnabled(False))
-        
+
         self.liveRateHeader = QtW.QLabel(self)
-        self.liveRateHeader.setText("Framerate/Exposure Controls")
+        self.liveRateHeader.setText("     Exposure/Rate")
         self.liveRateHeader.setStyleSheet("font-weight: bold")
         
         self.live10msButton = QtW.QPushButton(self)
@@ -761,57 +644,26 @@ class MainWindow(QtW.QMainWindow):
         self.live1sButton.clicked.connect(lambda: self.live100msButton.setEnabled(True))
         self.live1sButton.clicked.connect(lambda: self.live1sButton.setEnabled(False))
         self.live1sButton.clicked.connect(lambda: self.liveAcquire(rate=1000))
-        
+
         self.liveMedian = QtW.QCheckBox(self)
-        
-        self.liveViewHeader = QtW.QLabel(self)
-        self.liveViewHeader.setText("View Controls")
-        self.liveViewHeader.setStyleSheet("font-weight: bold")
 
-        self.xminLabel = QtW.QLabel(self)
-        self.xminLabel.setText("xmin")        
-        self.xminInput = QtW.QLineEdit(self)
-        self.xminInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        self.xminInput.textChanged.connect(lambda: LiveWindow.updateLimits(self))
-
-        self.xmaxLabel = QtW.QLabel(self)
-        self.xmaxLabel.setText("xmax")        
-        self.xmaxInput = QtW.QLineEdit(self)
-        self.xmaxInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        self.xmaxInput.textChanged.connect(lambda: LiveWindow.updateLimits(self))
-
-        self.yminLabel = QtW.QLabel(self)
-        self.yminLabel.setText("ymin")
-        self.yminInput = QtW.QLineEdit(self)
-        self.yminInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        self.yminInput.textChanged.connect(lambda: LiveWindow.updateLimits(self))
-
-        self.ymaxLabel = QtW.QLabel(self)
-        self.ymaxLabel.setText("ymax")
-        self.ymaxInput = QtW.QLineEdit(self)
-        self.ymaxInput.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        self.ymaxInput.textChanged.connect(lambda: LiveWindow.updateLimits(self))
-
-        self.clearLimitsButton = QtW.QPushButton(self)
-        self.clearLimitsButton.setText("Clear Limits")
-        self.clearLimitsButton.clicked.connect(lambda: LiveWindow.autorange(self))
-        
-        p3_vertical.addRow(self.liveStartStopHeader)
-        p3_vertical.addRow(self.liveStartButton)
-        p3_vertical.addRow(self.liveStopButton)        
-        p3_vertical.addRow(self.liveRateHeader)
-        p3_vertical.addRow(self.live10msButton)
-        p3_vertical.addRow(self.live100msButton)
-        p3_vertical.addRow(self.live1sButton)
-        p3_vertical.addRow("Persistence?",self.liveMedian)
-        p3_vertical.addRow(self.liveViewHeader)
-        p3_vertical.addRow(self.xminLabel, self.xminInput)
-        p3_vertical.addRow(self.xmaxLabel, self.xmaxInput)
-        p3_vertical.addRow(self.yminLabel, self.yminInput)
-        p3_vertical.addRow(self.ymaxLabel, self.ymaxInput)
-        p3_vertical.addRow(self.clearLimitsButton)
-   
-        ### TAB 4
+        p2_vertical.addRow(self.ccdHeader)
+        p2_vertical.addRow("Current temp", self.camTempLabel)
+        p2_vertical.addRow("Exposure time (s)", self.exposureTimeInput)
+        p2_vertical.addRow("Number of acquisitions:", self.nacqsInput)
+        p2_vertical.addRow(self.snapshotHeader)
+        p2_vertical.addRow("Take 1D snapshot", self.camButton)
+        p2_vertical.addRow("Take 2D snapshot", self.camButton2D)
+        p2_vertical.addRow(self.liveHeader)
+        p2_vertical.addRow(self.liveStartButton)
+        p2_vertical.addRow(self.liveStopButton)        
+        p2_vertical.addRow(self.liveRateHeader)
+        p2_vertical.addRow(self.live10msButton)
+        p2_vertical.addRow(self.live100msButton)
+        p2_vertical.addRow(self.live1sButton)
+        p2_vertical.addRow("     Persistence?",self.liveMedian)
+ 
+        ### TAB 3
         self.currentDir = QtW.QLabel(self)
         self.currentDir.setAlignment(QtC.Qt.AlignRight)
         
@@ -831,12 +683,12 @@ class MainWindow(QtW.QMainWindow):
         self.saveButton.clicked.connect(lambda: saveData(self.fname.text()))
         self.saveButton.setText("Save most recent data")
         
-        p4_vertical.addRow("Active folder", self.currentDir)
-        p4_vertical.addRow("Select new folder", self.dirButton)
-        p4_vertical.addRow("File name", self.fname)
-        p4_vertical.addRow(self.saveButton)
+        p3_vertical.addRow("Active folder", self.currentDir)
+        p3_vertical.addRow("Select new folder", self.dirButton)
+        p3_vertical.addRow("File name", self.fname)
+        p3_vertical.addRow(self.saveButton)
      
-        ### TAB 5
+        ### TAB 4
         self.shiftExcitationInput = QtW.QLineEdit(self)
         self.shiftExcitationInput.setMaxLength(7)
         self.shiftExcitationInput.setInputMask("9999.99")
@@ -871,16 +723,16 @@ class MainWindow(QtW.QMainWindow):
         self.relativeShift = QtW.QLabel(self)
         self.relativeShift.setObjectName("relativeShift")
 
-        p5_vertical.addRow("Excitation Wavelength (nm)", self.shiftExcitationInput)
-        p5_vertical.addRow(self.shiftWNHeader)
-        p5_vertical.addRow("Response Wavelength (nm)", self.shiftResponseInput)
-        p5_vertical.addRow("Raman Shift (1/cm)", self.shiftWN)
-        p5_vertical.addRow(self.shiftNMHeader)
-        p5_vertical.addRow("Raman shift (1/cm)", self.shiftInputWN)
-        p5_vertical.addRow("Absolute wavelength (nm)", self.absoluteShift)
-        p5_vertical.addRow("Relative wavelength (nm)", self.relativeShift)
+        p4_vertical.addRow("Excitation Wavelength (nm)", self.shiftExcitationInput)
+        p4_vertical.addRow(self.shiftWNHeader)
+        p4_vertical.addRow("Response Wavelength (nm)", self.shiftResponseInput)
+        p4_vertical.addRow("Raman Shift (1/cm)", self.shiftWN)
+        p4_vertical.addRow(self.shiftNMHeader)
+        p4_vertical.addRow("Raman shift (1/cm)", self.shiftInputWN)
+        p4_vertical.addRow("Absolute wavelength (nm)", self.absoluteShift)
+        p4_vertical.addRow("Relative wavelength (nm)", self.relativeShift)
         
-        ### TAB 6
+        ### TAB 5
         
         '''
         ## Left for easy feature testing/debugging
@@ -888,7 +740,7 @@ class MainWindow(QtW.QMainWindow):
         self.testButton.setText("TEST")
         ## update the following line to test whatever functionality is desired:
         self.testButton.clicked.connect(lambda: self.testFunction())        
-        p6_vertical.addRow(self.testButton)
+        p5_vertical.addRow(self.testButton)
         '''
 
         self.versionHeader = QtW.QLabel(self)
@@ -899,10 +751,6 @@ class MainWindow(QtW.QMainWindow):
         self.versionLabel.setObjectName("versionLabel")
         self.versionLabel.setText(str(vers_no))
         self.versionLabel.setAlignment(QtC.Qt.AlignRight|QtC.Qt.AlignTrailing|QtC.Qt.AlignVCenter)
-        
-        self.resetButton = QtW.QPushButton(self)
-        self.resetButton.setText("Reset Application")
-        self.resetButton.clicked.connect(lambda: self.resetWindow())
 
         self.calHeader = QtW.QLabel(self)
         self.calHeader.setText("Calibration")
@@ -963,20 +811,19 @@ class MainWindow(QtW.QMainWindow):
         self.docButton.setText("Open Software Manual")
         self.docButton.clicked.connect(lambda: webbrowser.open('Software Manual.pdf'))
         
-        p6_vertical.addRow(self.versionHeader)
-        p6_vertical.addRow(self.versionLabel)
-        p6_vertical.addRow("Reset", self.resetButton)
-        p6_vertical.addRow(self.calHeader)
-        p6_vertical.addRow(self.currentCounterInput, self.calButton)
-        p6_vertical.addRow(self.calWLInput, self.ccdCalButton)        
-        p6_vertical.addRow(self.monoSelectHeader)
-        p6_vertical.addRow("", self.singleButton)
-        p6_vertical.addRow("", self.tripleSingleButton)
-        p6_vertical.addRow("", self.tripleButton)
-        p6_vertical.addRow(self.linksHeader)
-        p6_vertical.addRow("GitHub Repository", self.gitButton)
-        p6_vertical.addRow("Configuration file", self.cfgButton)
-        p6_vertical.addRow("Documentation", self.docButton)
+        p5_vertical.addRow(self.versionHeader)
+        p5_vertical.addRow(self.versionLabel)
+        p5_vertical.addRow(self.calHeader)
+        p5_vertical.addRow(self.currentCounterInput, self.calButton)
+        p5_vertical.addRow(self.calWLInput, self.ccdCalButton)        
+        p5_vertical.addRow(self.monoSelectHeader)
+        p5_vertical.addRow("", self.singleButton)
+        p5_vertical.addRow("", self.tripleSingleButton)
+        p5_vertical.addRow("", self.tripleButton)
+        p5_vertical.addRow(self.linksHeader)
+        p5_vertical.addRow("GitHub Repository", self.gitButton)
+        p5_vertical.addRow("Configuration file", self.cfgButton)
+        p5_vertical.addRow("Documentation", self.docButton)
 
     def calibrateMono(self):
         ## updates the monochromator position based to the counter
@@ -1004,7 +851,6 @@ class MainWindow(QtW.QMainWindow):
         Mono1.approachWL(wavl+3)
         img1 = cam.snap()
         signal1 = []
-        pixel = range(1340)
         for i in range(1340):
             signal1.append(sum(img1[:, i]))
         max1 = max(signal1)
@@ -1014,7 +860,6 @@ class MainWindow(QtW.QMainWindow):
         Mono1.approachWL(wavl-3)
         img2 = cam.snap()
         signal2 = []
-        pixel = range(1340)
         for i in range(1340):
             signal2.append(sum(img2[:,i]))
         max2 = max(signal2)
@@ -1089,33 +934,33 @@ class MainWindow(QtW.QMainWindow):
 
     def calculateShift(self):
         ## handles live-updating shift calculator
-        if self.shiftResponseInput.text()+self.shiftInputWN.text() == '.':
-            self.statusBar().showMessage("Error: must enter at least one input",2000)
+        if self.shiftResponseInput.text()+self.shiftInputWN.text() == '..':
+            self.absoluteShift.setText('')
+            self.relativeShift.setText('')
+            self.shiftWN.setText('')
         elif self.shiftInputWN.text() == '-':
             pass
-        elif self.shiftResponseInput.text() == '.':
-            nm = round(wavToNM(self.shiftExcitationInput.text(),self.shiftInputWN.text()),2)
-            self.absoluteShift.setText(str(nm))
-            self.relativeShift.setText(str(round(nm - float(self.shiftExcitationInput.text()),2)))
-        elif self.shiftInputWN.text() == '':
-            wav = round(nmToWav(self.shiftExcitationInput.text(),self.shiftResponseInput.text()),2)
-            self.shiftWN.setText(str(wav))
-        else:       
+        elif self.shiftInputWN.text()!='.' and self.shiftResponseInput.text()!='.':
             wav = round(nmToWav(self.shiftExcitationInput.text(),self.shiftResponseInput.text()),2)
             self.shiftWN.setText(str(wav))
             nm = round(wavToNM(self.shiftExcitationInput.text(),self.shiftInputWN.text()),2)
             self.absoluteShift.setText(str(nm))
             self.relativeShift.setText(str(round(nm - float(self.shiftExcitationInput.text()),2)))
-
-    def resetWindow(self):
-        ## designed to reset imaging buttons after a camera error
-        cam.stop_acquisition()
-        cam.stop_acquisition()
-        self.camButton.setEnabled(True)
-        self.camButton2D.setEnabled(True)
-        self.ramanButton.setEnabled(True)
+        elif self.shiftInputWN.text()!='.':
+            nm = round(wavToNM(self.shiftExcitationInput.text(),self.shiftInputWN.text()),2)
+            self.absoluteShift.setText(str(nm))
+            self.relativeShift.setText(str(round(nm - float(self.shiftExcitationInput.text()),2)))
+            self.shiftWN.setText('')
+        elif self.shiftResponseInput.text()!='.':
+            wav = round(nmToWav(self.shiftExcitationInput.text(),self.shiftResponseInput.text()),2)
+            self.shiftWN.setText(str(wav))
+            self.absoluteShift.setText('')
+            self.relativeShift.setText('')
+        else:
+            pass
 
     def testFunction(self):
+        ## put whatever is desired in here
         print("test")
 
     def closeEvent(self,event):
@@ -1137,10 +982,12 @@ class LiveWindow(QtW.QMainWindow):
         global liveopen
         liveopen = True
 
+        Window.camButton.setEnabled(False)
+        Window.camButton2D.setEnabled(False)
+
         ## x-axis calculation
         global live_wavenum
         live_wavenum = []
-
         pos = float(Window.currentMonoWavelengthLabel.text())
         pxc = 670.5
         pixel = range(0,1340)
@@ -1162,12 +1009,10 @@ class LiveWindow(QtW.QMainWindow):
         
         ## creates live plot
         global data_buffer
-        data_buffer = np.zeros((1340,10))
-        
-        
         global plot_graph
-        plot_graph = pg.PlotWidget()
         global curve
+        data_buffer = np.zeros((1340,10))
+        plot_graph = pg.PlotWidget()
         curve = plot_graph.plot()
         self.setCentralWidget(plot_graph)
         cam.set_roi(vbin = 100)
@@ -1182,74 +1027,17 @@ class LiveWindow(QtW.QMainWindow):
         global livetime
         livetime = int(rate)
 
-    def autorange(self):
-        ## doesn't do what it should RIP
-        global plot_graph
-        Window.xminInput.clear()
-        Window.xmaxInput.clear()
-        Window.yminInput.clear()
-        Window.ymaxInput.clear()
-        try:
-            plot_graph
-        except:
-            pass
-        else:
-            plot_graph.autoRange(item=curve)
-            plot_graph.enableAutoRange()
-
-    def updateLimits(self):
-        global xmin, xmax, ymin, ymax, plot_graph
-        if Window.xminInput.text()+Window.xmaxInput.text()+Window.yminInput.text()+Window.ymaxInput.text()=="":
-            xmin = 0
-            xmax = 0
-            ymin = 0
-            ymax = 0
-        else:
-            if Window.xminInput.text()=='':
-                pass
-            elif Window.xminInput.text()=='-':
-                pass
-            elif xmin == float(Window.xminInput.text()):
-                pass
-            else:
-                xmin = float(Window.xminInput.text())
-                plot_graph.setLimits(xMin=xmin)
-
-            if Window.xmaxInput.text()=='':
-                pass
-            elif xmax == float(Window.xmaxInput.text()):
-                pass
-            else:
-                xmax = float(Window.xmaxInput.text())
-                plot_graph.setLimits(xMax=xmax)            
-
-            if Window.yminInput.text()=='':
-                pass
-            elif Window.yminInput.text()=='-':
-                pass
-            elif ymin == float(Window.yminInput.text()):
-                pass
-            else:
-                ymin = float(Window.yminInput.text())
-                plot_graph.setLimits(yMin=ymin)
-            
-            if Window.ymaxInput.text()=='':
-                pass
-            elif ymax == float(Window.ymaxInput.text()):
-                pass
-            else:
-                ymax = float(Window.ymaxInput.text())
-                plot_graph.setLimits(yMax=ymax)
-
     def update(self):
         ## take most recent data and plot
         global curve
         global data_buffer
         global livetime
-        img = cam.snap(timeout = livetime)
+        try:
+            img = cam.snap(timeout = livetime)
+        except:
+            img = cam.snap(timeout = livetime)
         live_data = []
         live_data = img.reshape(-1)
-        
         if not(Window.liveMedian.isChecked()):
             curve.setData(live_wavenum,live_data)
         else:
@@ -1264,6 +1052,8 @@ class LiveWindow(QtW.QMainWindow):
         liveTimer.stop()
         cam.stop_acquisition()
         cam.set_attribute_value("Exposure Time", 1000*float(Window.exposureTimeInput.text()))
+        Window.camButton.setEnabled(True)
+        Window.camButton2D.setEnabled(True)
         Window.liveStartButton.setEnabled(True)
         Window.liveStopButton.setEnabled(False)    
         global liveopen
